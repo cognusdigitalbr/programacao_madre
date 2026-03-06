@@ -142,7 +142,7 @@ async function executeTool(
       }
 
       case 'processar_comprovante': {
-        result = await toolProcessarComprovante(args.texto);
+        result = await toolProcessarComprovante(args.texto, sessionId);
         break;
       }
 

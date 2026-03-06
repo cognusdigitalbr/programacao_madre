@@ -196,7 +196,7 @@ export async function criarPedido(bolaoId: string, clienteId: string) {
 
   const { data } = await supabaseErica
     .from('pedidos')
-    .insert({ bolao_id: bolaoId, cliente_id: clienteId, codigo, status: 'pendente' })
+    .insert({ bolao_id: bolaoId, cliente_id: clienteId, codigo, status: 'aguardando_pagamento' })
     .select()
     .single();
   return data;

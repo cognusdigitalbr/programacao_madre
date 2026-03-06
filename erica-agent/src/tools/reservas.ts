@@ -95,7 +95,7 @@ export async function toolFazerReservas(
 
 const CNPJ_MADRE = '10519294000116';
 
-export async function toolProcessarComprovante(texto: string): Promise<{ sucesso: boolean; cnpj?: string; mensagem: string }> {
+export async function toolProcessarComprovante(texto: string, sessionId: string): Promise<{ sucesso: boolean; cnpj?: string; mensagem: string }> {
   try {
     console.log(`[COMPROVANTE] Texto recebido: "${texto.slice(0, 400)}"`);
 
@@ -123,6 +123,22 @@ export async function toolProcessarComprovante(texto: string): Promise<{ sucesso
     }
 
     console.log(`[COMPROVANTE] CNPJ e razão social validados`);
+
+    // Atualiza pedidos da sessão para status a_endossar
+    const sessao = await getSessao(sessionId);
+    if (sessao.pedidos_ids?.length) {
+      const { error } = await supabaseErica
+        .from('pedidos')
+        .update({ status: 'a_endossar' })
+        .in('id', sessao.pedidos_ids);
+
+      if (error) {
+        console.error('[COMPROVANTE] Erro ao atualizar status pedidos:', error.message);
+      } else {
+        console.log(`[COMPROVANTE] ${sessao.pedidos_ids.length} pedido(s) → a_endossar`);
+      }
+    }
+
     return { sucesso: true, cnpj: match[0], mensagem: 'Comprovante recebido e validado! ✅' };
   } catch (err: any) {
     console.error('[COMPROVANTE] Erro:', err.message);
