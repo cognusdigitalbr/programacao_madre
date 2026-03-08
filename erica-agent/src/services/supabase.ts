@@ -132,8 +132,8 @@ export async function getResultados() {
 export async function getAcumuladosPorLoteria(): Promise<Record<string, number>> {
   const { data } = await supabase
     .from('resultados_loterias')
-    .select('loteria, valor_acumulado, data_sorteio')
-    .order('data_sorteio', { ascending: false });
+    .select('loteria, valor_acumulado, created_at')
+    .order('created_at', { ascending: false });
 
   if (!data) return {};
 

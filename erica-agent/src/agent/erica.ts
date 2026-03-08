@@ -1,5 +1,25 @@
 import { openai, MODEL } from '../services/openai';
 import { getChatHistory, saveChatMessage, getClienteByTelefone, getUltimaLoteria, getAcumuladosPorLoteria } from '../services/supabase';
+
+// Mapeia nome do bolão (ex: "Mega-Sena") para chave do acumulado (ex: "MEGA-SENA")
+function buscarAcumulado(nomeBolao: string, acumulados: Record<string, number>): number | null {
+  const mapa: Record<string, string[]> = {
+    'Mega Sena':  ['MEGA-SENA'],
+    'Lotofacil':  ['LOTOFÁCIL', 'LOTOFACIL'],
+    'Dupla Sena': ['DUPLASENA', 'DUPLA SENA'],
+    'Quina':      ['QUINA'],
+    'Lotomania':  ['LOTOMANIA'],
+    'Timemania':  ['TIMEMANIA'],
+    'Super Sete': ['SUPER SETE'],
+    'Dia de Sorte': ['DIA DE SORTE'],
+    'Milionaria': ['+MILIONÁRIA', 'MILIONÁRIA'],
+  };
+  const chaves = mapa[nomeBolao] || [nomeBolao.toUpperCase()];
+  for (const chave of chaves) {
+    if (acumulados[chave] && acumulados[chave] > 0) return acumulados[chave];
+  }
+  return null;
+}
 import { getSessao, saveSessao, atualizarFase, confirmarBolao, marcarBolaoOferecido, salvarBoloesDisponiveis } from '../services/session';
 import { sendText } from '../services/whatsapp';
 import { toolBuscarBoloes } from '../tools/boloes';
@@ -13,7 +33,8 @@ import type { MessageContext } from '../types';
 async function executeTool(
   name: string,
   args: any,
-  ctx: MessageContext
+  ctx: MessageContext,
+  acumulados: Record<string, number> = {}
 ): Promise<string> {
   const { sessionId, remoteJid } = ctx;
   console.log(`[TOOL] ▶ ${name}`, JSON.stringify(args));
@@ -26,7 +47,14 @@ async function executeTool(
         const boloes = await toolBuscarBoloes(args.data_sorteio);
         // Zero RAM: salva lista de bolões no Supabase
         await salvarBoloesDisponiveis(sessionId, boloes);
-        result = { sucesso: true, total: boloes.length, boloes };
+
+        // Enriquece cada bolão com o valor acumulado da loteria (para o LLM apresentar ao cliente)
+        const boloesEnriquecidos = boloes.map((b: any) => {
+          const acumulado = buscarAcumulado(b.nome, acumulados);
+          return { ...b, valor_acumulado: acumulado };
+        });
+
+        result = { sucesso: true, total: boloes.length, boloes: boloesEnriquecidos };
         break;
       }
 
@@ -213,7 +241,8 @@ export async function runErica(ctx: MessageContext): Promise<void> {
         const result = await executeTool(
           tc.function.name,
           JSON.parse(tc.function.arguments),
-          ctx
+          ctx,
+          acumulados
         );
         toolResults.push({
           role: 'tool',
