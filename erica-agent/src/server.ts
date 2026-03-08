@@ -7,11 +7,11 @@ import { getLead_IA, upsertLead } from './services/supabase';
 import { resetarSessao } from './services/session';
 import { clearChatHistory } from './services/supabase';
 import { downloadMedia } from './services/whatsapp';
-import { transcribeAudio, extractImageText } from './services/openai';
+import { transcribeAudio, extractImageText, extractBilheteNumbers } from './services/openai';
 import type { MessageContext } from './types';
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.PORT || 3000;
 
@@ -143,6 +143,51 @@ app.post('/webhook', async (req, res) => {
 
   } catch (err: any) {
     console.error('[SERVER] Erro no webhook:', err.message);
+  }
+});
+
+// ─── EXTRAIR DEZENAS DO BILHETE (para o painel admin) ─────────────────────────
+
+app.post('/api/extrair-bilhete', async (req, res) => {
+  try {
+    const { base64, mimetype, loteria_esperada } = req.body;
+
+    if (!base64) {
+      res.status(400).json({ sucesso: false, mensagem: 'base64 é obrigatório' });
+      return;
+    }
+
+    console.log('[BILHETE] Processando imagem...');
+    const resultado = await extractBilheteNumbers(base64, mimetype || 'image/jpeg');
+
+    if (!resultado) {
+      res.status(422).json({ sucesso: false, mensagem: 'Não foi possível extrair os jogos da imagem.' });
+      return;
+    }
+
+    // Trava de divergência: verifica se o bilhete é da loteria selecionada
+    if (loteria_esperada) {
+      const loteríaBilhete = resultado.loteria.toLowerCase().replace(/[-\s]/g, '');
+      const loteríaEsperada = loteria_esperada.toLowerCase().replace(/[-\s]/g, '');
+
+      if (!loteríaBilhete.includes(loteríaEsperada) && !loteríaEsperada.includes(loteríaBilhete)) {
+        console.warn(`[BILHETE] Divergência: esperado "${loteria_esperada}", bilhete é "${resultado.loteria}"`);
+        res.json({
+          sucesso: false,
+          divergente: true,
+          loteria_bilhete: resultado.loteria,
+          loteria_esperada,
+          mensagem: `⚠️ Bilhete divergente! Você selecionou ${loteria_esperada} mas o bilhete enviado é de ${resultado.loteria}. Verifique e reenvie.`
+        });
+        return;
+      }
+    }
+
+    console.log(`[BILHETE] OK — ${resultado.loteria}, ${resultado.jogos.length} jogos, valor cota: R$${resultado.valor_cota}`);
+    res.json({ sucesso: true, divergente: false, ...resultado });
+  } catch (err: any) {
+    console.error('[BILHETE] Erro no endpoint:', err.message);
+    res.status(500).json({ sucesso: false, mensagem: 'Erro interno ao processar imagem.' });
   }
 });
 
