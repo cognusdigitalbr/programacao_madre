@@ -178,7 +178,7 @@ async function executeTool(
         result = { error: `Tool desconhecida: ${name}` };
     }
 
-    console.log(`[TOOL] ◀ ${name}`, JSON.stringify(result).slice(0, 200));
+    console.log(`[TOOL] ◀ ${name}`, JSON.stringify(result).slice(0, 600));
     return JSON.stringify(result);
   } catch (err: any) {
     console.error(`[TOOL] ✗ ${name}`, err.message);

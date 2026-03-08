@@ -53,7 +53,7 @@ export async function extractImageText(base64: string, mimetype: string): Promis
           ]
         }
       ],
-      max_tokens: 500
+      max_tokens: 1500
     });
 
     const texto = response.choices[0].message.content || '';

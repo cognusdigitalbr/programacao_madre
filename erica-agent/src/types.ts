@@ -16,6 +16,7 @@ export interface Bolao {
   data_sorteio: string;
   codigo: string;
   quantidade_jogos: number;
+  jogos: string[][];   // dezenas de cada jogo ex: [["01","09","36"], ["02","10","28"]]
   status: string;
 }
 

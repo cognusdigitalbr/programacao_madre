@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+*.log
+.git
+*.md
+check_*.ts
+check_*.mjs
+fix_*.ts
+upload_*.ts
+seed.ts
+reset.ts
+simulate.sh
+contexto_conversa.md

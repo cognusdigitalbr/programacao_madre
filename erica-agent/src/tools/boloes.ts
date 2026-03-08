@@ -24,6 +24,7 @@ export async function toolBuscarBoloes(dataSorteio: string): Promise<Bolao[]> {
       data_sorteio: b.data_sorteio,
       codigo: b.codigo,
       quantidade_jogos: Array.isArray(b.jogos) ? b.jogos.length : 0,
+      jogos: Array.isArray(b.jogos) ? b.jogos : [],
       status: b.status
     }));
 
