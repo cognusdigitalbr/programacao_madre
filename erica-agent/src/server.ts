@@ -8,7 +8,10 @@ import { resetarSessao } from './services/session';
 import { clearChatHistory } from './services/supabase';
 import { downloadMedia } from './services/whatsapp';
 import { transcribeAudio, extractImageText, extractBilheteNumbers } from './services/openai';
+import { toolBuscarBoloes } from './tools/boloes';
 import type { MessageContext } from './types';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require('pdf-parse');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -66,10 +69,27 @@ app.post('/webhook', async (req, res) => {
     let text = '';
     let mediaType: MessageContext['mediaType'] = 'text';
 
+    // Extrai contexto de reply (quando o cliente arrasta uma mensagem para responder)
+    // Presente em extendedTextMessage e imageMessage quando é uma resposta
+    function extrairContextoReply(contextInfo: any): string {
+      if (!contextInfo) return '';
+      const quoted = contextInfo.quotedMessage;
+      if (!quoted) return '';
+      // Pega o texto da mensagem citada (pode ser texto simples ou extendedText)
+      const textoQuotado = quoted.conversation
+        || quoted.extendedTextMessage?.text
+        || quoted.imageMessage?.caption
+        || '';
+      if (!textoQuotado) return '';
+      return `[RESPONDENDO À MENSAGEM: "${textoQuotado}"] `;
+    }
+
     if (message.conversation) {
       text = message.conversation;
     } else if (message.extendedTextMessage?.text) {
-      text = message.extendedTextMessage.text;
+      // Inclui contexto do reply se houver
+      const prefixoReply = extrairContextoReply(message.extendedTextMessage.contextInfo);
+      text = prefixoReply + message.extendedTextMessage.text;
     } else if (message.audioMessage) {
       mediaType = 'audio';
       console.log(`[SERVER] Áudio recebido — transcrevendo...`);
@@ -84,7 +104,9 @@ app.post('/webhook', async (req, res) => {
     } else if (message.imageMessage) {
       mediaType = 'image';
       const caption = message.imageMessage.caption || '';
-      console.log(`[SERVER] Imagem recebida — extraindo texto...`);
+      // Inclui contexto do reply se o cliente arrastou uma mensagem para responder com imagem
+      const prefixoReply = extrairContextoReply(message.imageMessage.contextInfo);
+      console.log(`[SERVER] Imagem recebida${prefixoReply ? ' (reply)' : ''} — extraindo texto...`);
 
       // webhookBase64: true — Evolution API já envia base64 direto no payload
       const base64Direto: string | undefined = data.message?.base64 || data.base64;
@@ -108,14 +130,57 @@ app.post('/webhook', async (req, res) => {
 
       if (mediaBase64) {
         const extraido = await extractImageText(mediaBase64, mediaMimetype);
-        text = extraido || caption || '[imagem sem texto legível]';
+        // Monta o texto com contexto do reply (se houver) + conteúdo da imagem
+        const conteudoImagem = extraido || caption || '[imagem sem texto legível]';
+        text = prefixoReply + conteudoImagem;
       } else {
-        text = caption || '[imagem não processada — cliente deve reenviar o comprovante como texto ou nova imagem]';
+        const conteudoImagem = caption || '[imagem não processada — cliente deve reenviar o comprovante como texto ou nova imagem]';
+        text = prefixoReply + conteudoImagem;
         console.log(`[SERVER] Imagem não processada — sem base64 disponível`);
       }
     } else if (message.documentMessage) {
-      text = message.documentMessage.caption || '[documento]';
+      const nomeArquivo = message.documentMessage.fileName || '';
+      const mimetypeDoc = message.documentMessage.mimetype || '';
+      const captionDoc = message.documentMessage.caption || '';
       mediaType = 'document';
+      console.log(`[SERVER] Documento recebido: ${nomeArquivo} (${mimetypeDoc})`);
+
+      // Tenta extrair texto do PDF para processar como comprovante
+      const ehPdf = mimetypeDoc.includes('pdf') || nomeArquivo.toLowerCase().endsWith('.pdf');
+      if (ehPdf) {
+        try {
+          // Tenta base64 direto no payload primeiro (webhookBase64), depois baixa
+          const base64Direto: string | undefined = data.message?.base64 || data.base64;
+          let pdfBase64: string | null = base64Direto || null;
+
+          if (!pdfBase64) {
+            const media = await downloadMedia(data);
+            pdfBase64 = media?.base64 || null;
+          } else {
+            console.log(`[SERVER] PDF base64 recebido direto no payload`);
+          }
+
+          if (pdfBase64) {
+            const buffer = Buffer.from(pdfBase64, 'base64');
+            const resultado = await pdfParse(buffer);
+            const textoPdf = resultado.text?.trim();
+            if (textoPdf && textoPdf.length > 20) {
+              text = textoPdf;
+              console.log(`[SERVER] PDF extraído: ${textoPdf.length} chars`);
+            } else {
+              text = `[documento PDF sem texto legível: ${nomeArquivo}]`;
+            }
+          } else {
+            text = `[documento PDF não baixado: ${nomeArquivo}]`;
+          }
+        } catch (errPdf: any) {
+          console.error(`[SERVER] Erro ao ler PDF: ${errPdf.message}`);
+          text = `[documento PDF com erro: ${nomeArquivo}]`;
+        }
+      } else {
+        // Documento não-PDF (ex: Word, Excel) — não conseguimos processar
+        text = `[documento recebido: ${nomeArquivo || 'arquivo'}${captionDoc ? ' — ' + captionDoc : ''}]`;
+      }
     }
 
     if (!text) return;
@@ -200,6 +265,23 @@ app.post('/api/extrair-bilhete', async (req, res) => {
   } catch (err: any) {
     console.error('[BILHETE] Erro no endpoint:', err.message);
     res.status(500).json({ sucesso: false, mensagem: 'Erro interno ao processar imagem.' });
+  }
+});
+
+// ─── BOLÕES DISPONÍVEIS (para monitoramento e painel) ─────────────────────────
+
+app.get('/api/boloes-disponiveis', async (req, res) => {
+  try {
+    const boloes = await toolBuscarBoloes();
+    // Agrupa por data de sorteio para facilitar leitura
+    const porData: Record<string, any[]> = {};
+    for (const b of boloes) {
+      if (!porData[b.data_sorteio]) porData[b.data_sorteio] = [];
+      porData[b.data_sorteio].push({ nome: b.nome, cotas: b.cotas, valor: b.valor, codigo: b.codigo });
+    }
+    res.json({ sucesso: true, total: boloes.length, por_data: porData });
+  } catch (err: any) {
+    res.status(500).json({ sucesso: false, mensagem: err.message });
   }
 });
 

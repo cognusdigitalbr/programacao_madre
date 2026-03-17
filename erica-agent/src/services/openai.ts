@@ -121,7 +121,7 @@ export async function extractImageText(base64: string, mimetype: string): Promis
             },
             {
               type: 'text',
-              text: 'Extraia todo o texto visível nesta imagem. Se for um comprovante PIX, identifique e destaque:\nNOME DO RECEBEDOR: [nome]\nCNPJ DO RECEBEDOR: [XX.XXX.XXX/XXXX-XX]\nVALOR: [R$ X,XX]\nDATA: [data]\nRetorne o texto completo da imagem sem omitir nada.'
+              text: 'Extraia todo o texto visível nesta imagem. Se for um comprovante PIX, identifique e destaque:\nNOME DO RECEBEDOR: [nome]\nCNPJ DO RECEBEDOR: [XX.XXX.XXX/XXXX-XX]\nDATA: [data]\nRetorne o texto completo da imagem sem omitir nada. NÃO destaque nem mencione o valor pago.'
             }
           ]
         }

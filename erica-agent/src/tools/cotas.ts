@@ -1,33 +1,32 @@
 import { supabaseErica } from '../services/supabase';
-import { salvarCotaSelecionada } from '../services/session';
+import { salvarCotaSelecionada, salvarCotaPreSelecionada } from '../services/session';
 import type { CotaSelecionada } from '../types';
 
 // Busca e seleciona cota direto no Supabase — sem depender do N8N
+// codigoBolao: código único do bolão (ex: "MegaSena-090326-0902") — garante identificação sem ambiguidade
 export async function toolBuscarEscolherCota(
   sessionId: string,
+  codigoBolao: string,
   loteria: string,
   total_cotas: number,
   data_sorteio: string,
   valor_cota: number
 ): Promise<{ sucesso: boolean; cotas_disponiveis: number; cota?: CotaSelecionada }> {
   try {
-    // Encontra o bolão pelo nome da loteria (via join), total_cotas e data_sorteio
+    // Busca o bolão pelo código único — elimina ambiguidade de múltiplos bolões com mesma loteria/cotas
     const { data: boloes, error: errBolao } = await supabaseErica
       .from('boloes')
-      .select('id, loterias(nome)')
-      .eq('total_cotas', total_cotas)
-      .eq('data_sorteio', data_sorteio)
-      .eq('status', 'ativo');
+      .select('id, codigo')
+      .eq('codigo', codigoBolao)
+      .eq('status', 'ativo')
+      .limit(1);
 
     if (errBolao || !boloes?.length) {
-      console.error('[COTAS] Bolão não encontrado:', errBolao?.message);
+      console.error('[COTAS] Bolão não encontrado pelo código:', codigoBolao, errBolao?.message);
       return { sucesso: false, cotas_disponiveis: 0 };
     }
 
-    // Filtra pelo nome exato da loteria (o LLM usa o nome retornado por buscar_boloes)
-    const bolao = boloes.find((b: any) =>
-      b.loterias?.nome?.toLowerCase() === loteria.toLowerCase()
-    ) || boloes[0];
+    const bolao = boloes[0];
 
     // Busca cotas disponíveis para este bolão
     const { data: cotas, error: errCotas } = await supabaseErica
@@ -54,9 +53,11 @@ export async function toolBuscarEscolherCota(
       valor_cota
     };
 
-    // Salva na sessão — zero RAM
+    // Salva no mapa por código do bolão (permite múltiplos bilhetes sem sobrescrever)
+    await salvarCotaPreSelecionada(sessionId, codigoBolao, cotaSelecionada);
+    // Mantém cota_selecionada por compatibilidade
     await salvarCotaSelecionada(sessionId, cotaSelecionada);
-    console.log(`[COTAS] Cota ${primeira.numero} selecionada para ${loteria} — ${cotas.length} disponíveis`);
+    console.log(`[COTAS] Cota ${primeira.numero} pré-selecionada para ${loteria} (${codigoBolao}) — ${cotas.length} disponíveis`);
     return { sucesso: true, cotas_disponiveis: cotas.length, cota: cotaSelecionada };
   } catch (err: any) {
     console.error('[COTAS] Erro:', err.message);

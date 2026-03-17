@@ -214,6 +214,39 @@ export async function atualizarStatusPedido(pedidoId: string, status: string) {
   await supabaseErica.from('pedidos').update({ status }).eq('id', pedidoId);
 }
 
+// Verifica se há pedidos pendentes com sorteio ainda no futuro
+// Retorna: valido=true se ainda tem reserva ativa, itens com o resumo do que está pendente
+export async function verificarReservasPendentes(pedidosIds: string[]): Promise<{
+  valido: boolean;
+  itens: Array<{ loteria: string; data_sorteio: string; valor: number }>;
+}> {
+  if (!pedidosIds?.length) return { valido: false, itens: [] };
+
+  const hoje = new Date().toISOString().split('T')[0]; // YYYY-MM-DD no fuso local
+
+  const { data } = await supabaseErica
+    .from('pedidos')
+    .select('id, status, boloes(codigo, data_sorteio, valor_cota)')
+    .in('id', pedidosIds)
+    .eq('status', 'aguardando_pagamento');
+
+  if (!data || data.length === 0) return { valido: false, itens: [] };
+
+  // Só reservas cujo sorteio ainda não aconteceu
+  const validos = data.filter(p => {
+    const dataSorteio = (p.boloes as any)?.data_sorteio;
+    return dataSorteio && dataSorteio >= hoje;
+  });
+
+  const itens = validos.map(p => ({
+    loteria: (p.boloes as any)?.codigo?.split('-')[0] || 'Bolão',
+    data_sorteio: (p.boloes as any)?.data_sorteio || '',
+    valor: Number((p.boloes as any)?.valor_cota || 0),
+  }));
+
+  return { valido: validos.length > 0, itens };
+}
+
 export async function getBolaoById(bolaoId: string) {
   const { data } = await supabaseErica
     .from('boloes')

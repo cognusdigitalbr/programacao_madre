@@ -6,7 +6,7 @@ import {
   criarPedidoCota,
   marcarCotaVendida
 } from '../services/supabase';
-import { getSessao, adicionarPedidoId, atualizarFase } from '../services/session';
+import { getSessao, adicionarPedidoId, atualizarFase, salvarDadosCliente } from '../services/session';
 
 const PIX_CHAVE = 'lotericamadre@gmail.com';
 const PIX_NOME = 'Lotérica da Madre';
@@ -37,7 +37,9 @@ export async function toolFazerReservas(
   try {
     // 1. Valida CPF
     if (!validarCPF(cpf)) {
-      return { sucesso: false, mensagem: 'CPF inválido. Por favor, me passe o CPF correto.' };
+      // Salva nome e telefone na sessão para não pedir de novo — só o CPF está errado
+      await salvarDadosCliente(sessionId, { nome, cpf: '', telefone });
+      return { sucesso: false, mensagem: 'CPF inválido. Por favor, me mande apenas o CPF correto.' };
     }
 
     // 2. Busca sessão — tudo vem do Supabase
@@ -80,10 +82,17 @@ export async function toolFazerReservas(
     // 5. Atualiza fase
     await atualizarFase(sessionId, 'aguardando_pagamento');
 
-    const totalValor = sessao.boloes_confirmados.reduce((s, b) => s + b.valor_cota, 0);
+    const totalValor = sessao.boloes_confirmados.reduce((s, b) => s + Number(b.valor_cota), 0);
     const totalFormatado = totalValor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-    const pixMsg = `💳 *Dados para pagamento via PIX:*\n🔑 Chave: ${PIX_CHAVE}\n👤 Nome: ${PIX_NOME}\n💰 Valor: ${totalFormatado}\n\nMe manda o comprovante quando pagar! 😊`;
+    // Lista das cotas reservadas — garante que a IA transmite exatamente o que foi reservado
+    const listaCotas = sessao.boloes_confirmados
+      .map(b => `• ${b.loteria} — R$ ${Number(b.valor_cota).toFixed(2).replace('.', ',')}`)
+      .join('\n');
+
+    console.log(`[RESERVA] Cotas reservadas:\n${listaCotas}\nTotal: ${totalFormatado}`);
+
+    const pixMsg = `✅ *Suas cotas estão reservadas!*\n\n${listaCotas}\n\n💰 *Total: ${totalFormatado}*\n\n💳 *Pagamento via PIX:*\n🔑 Chave: ${PIX_CHAVE}\n👤 ${PIX_NOME}\n\nMe manda o comprovante quando pagar! 😊`;
 
     console.log(`[RESERVA] ${pedidosIds.length} pedido(s) criado(s) para ${nome}`);
     return { sucesso: true, mensagem: pixMsg, pix: PIX_CHAVE };
@@ -99,30 +108,53 @@ export async function toolProcessarComprovante(texto: string, sessionId: string)
   try {
     console.log(`[COMPROVANTE] Texto recebido: "${texto.slice(0, 400)}"`);
 
-    // Extrai CNPJ (com ou sem formatação: XX.XXX.XXX/XXXX-XX ou 14 dígitos seguidos)
+    const textoLower = texto.toLowerCase();
+
+    // Tenta extrair CNPJ completo (com ou sem formatação)
     const match = texto.match(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/);
-    if (!match) {
-      console.warn('[COMPROVANTE] CNPJ não encontrado no texto');
+    let cnpjValidado = false;
+    let cnpjExibir = '';
+
+    if (match) {
+      const cnpj = match[0].replace(/\D/g, '');
+      console.log(`[COMPROVANTE] CNPJ extraído: ${cnpj}`);
+      if (cnpj === CNPJ_MADRE) {
+        cnpjValidado = true;
+        cnpjExibir = match[0];
+      } else {
+        console.warn(`[COMPROVANTE] CNPJ incorreto: esperado ${CNPJ_MADRE}, recebido ${cnpj}`);
+      }
+    }
+
+    // Fallback: CNPJ pode estar mascarado pelo OCR (ex: "**.**9.294/0001-**")
+    // Aceita se a razão social "madre" estiver presente + fragmentos únicos do CNPJ
+    if (!cnpjValidado) {
+      const temMadre = textoLower.includes('madre') || textoLower.includes('loterica da madre') || textoLower.includes('lotérica da madre');
+      const temFragmento = texto.includes('9.294/0001') || texto.includes('9294/0001') || texto.includes('519294') || texto.includes('10519294');
+      if (temMadre && temFragmento) {
+        console.log(`[COMPROVANTE] CNPJ mascarado pelo OCR — validado por razão social + fragmento`);
+        cnpjValidado = true;
+        cnpjExibir = CNPJ_MADRE;
+      }
+    }
+
+    if (!cnpjValidado) {
+      // Se tem "madre" mas não achou CNPJ nem fragmento — provavelmente OCR cortou demais
+      if (textoLower.includes('madre')) {
+        console.warn('[COMPROVANTE] Madre presente mas CNPJ não identificável — pedindo reenvio');
+        return { sucesso: false, mensagem: 'Não consegui ler o CNPJ do comprovante. Pode tirar uma foto mais nítida do QR code ou dos dados do recebedor?' };
+      }
+      console.warn('[COMPROVANTE] CNPJ e razão social não encontrados');
       return { sucesso: false, mensagem: 'Não consegui identificar o CNPJ no comprovante. Pode reenviar a imagem?' };
     }
 
-    const cnpj = match[0].replace(/\D/g, '');
-    console.log(`[COMPROVANTE] CNPJ extraído: ${cnpj}`);
-
-    // Valida se é o CNPJ da Lotérica da Madre
-    if (cnpj !== CNPJ_MADRE) {
-      console.warn(`[COMPROVANTE] CNPJ incorreto: esperado ${CNPJ_MADRE}, recebido ${cnpj}`);
-      return { sucesso: false, mensagem: 'O comprovante não é da Lotérica da Madre. Verifique o destinatário e reenvie.' };
-    }
-
     // Valida razão social — precisa conter "madre" no texto
-    const textoLower = texto.toLowerCase();
     if (!textoLower.includes('madre')) {
       console.warn('[COMPROVANTE] Razão social "Madre" não encontrada no texto');
       return { sucesso: false, mensagem: 'O comprovante não é da Lotérica da Madre. Verifique o destinatário e reenvie.' };
     }
 
-    console.log(`[COMPROVANTE] CNPJ e razão social validados`);
+    console.log(`[COMPROVANTE] Validado — CNPJ: ${cnpjExibir}`);
 
     // Atualiza pedidos da sessão para status a_endossar
     const sessao = await getSessao(sessionId);
@@ -139,7 +171,7 @@ export async function toolProcessarComprovante(texto: string, sessionId: string)
       }
     }
 
-    return { sucesso: true, cnpj: match[0], mensagem: 'Comprovante recebido e validado! ✅' };
+    return { sucesso: true, cnpj: cnpjExibir, mensagem: 'Comprovante recebido e validado! ✅' };
   } catch (err: any) {
     console.error('[COMPROVANTE] Erro:', err.message);
     return { sucesso: false, mensagem: 'Erro ao processar comprovante.' };

@@ -50,9 +50,15 @@ export interface SessaoErica {
   session_id: string;
   fase: 'abertura' | 'venda' | 'upsell' | 'downsell' | 'fechamento' | 'aguardando_pagamento';
   cota_selecionada: CotaSelecionada | null;
+  // Mapa de cotas pré-selecionadas por código do bolão — permite o cliente ver vários bilhetes antes de confirmar
+  cotas_pre_selecionadas: Record<string, CotaSelecionada>;
   boloes_confirmados: BolaoConfirmado[];
   boloes_oferecidos: string[];
   boloes_disponiveis: Bolao[];
+  // Loterias cuja lista de bolões já foi exibida ao cliente nesta sessão
+  loterias_listadas: string[];
+  // Código do último bilhete mostrado — servidor valida confirmar_compra contra este valor
+  ultimo_bilhete_mostrado: string | null;
   dados_cliente: DadosCliente | null;
   pedidos_ids: string[];
   ultima_atividade: string;

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import sharp from 'sharp';
 import { supabaseErica } from '../services/supabase';
 import { getSessao } from '../services/session';
 import { sendImage } from '../services/whatsapp';
@@ -31,9 +32,13 @@ export async function toolEnviarImagem(
       return { sucesso: false, mensagem: 'Imagem do bilhete não disponível.' };
     }
 
-    // Baixa a imagem e converte para base64
+    // Baixa a imagem, corrige orientação EXIF e converte para base64
     const imgResponse = await axios.get(bolao.imagem_bilhete_url, { responseType: 'arraybuffer' });
-    const base64 = Buffer.from(imgResponse.data).toString('base64');
+    const imgBuffer = Buffer.from(imgResponse.data);
+    // .rotate() sem argumento corrige automaticamente a orientação pelo EXIF
+    // (fotos tiradas na vertical que chegam deitadas no WhatsApp)
+    const correctedBuffer = await sharp(imgBuffer).rotate().toBuffer();
+    const base64 = correctedBuffer.toString('base64');
 
     // Envia via Evolution API
     await sendImage(remoteJid, base64);
